@@ -1,17 +1,27 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app), wired up with [Drizzle ORM](https://orm.drizzle.team) + [Neon Postgres](https://neon.tech) and [Better Auth](https://www.better-auth.com).
+
+## Setup
+
+This project uses [pnpm](https://pnpm.io). Run `pnpm install` first.
+
+1. Create `.env.local` with `DATABASE_URL` (Neon → Connect), `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `BETTER_AUTH_URL` (`http://localhost:3000` in development).
+2. Create the tables (catalogue: `categories`, `products`, `product_images`; auth: `user`, `session`, `account`, `verification`) and load the starting products:
+   ```bash
+   pnpm db:migrate   # applies the SQL in drizzle/
+   pnpm db:seed      # safe to re-run; upserts by slug
+   ```
+   The storefront reads products from the database, so pages return an error until this is done.
+
+   After changing `src/db/schema.ts`, run `pnpm db:generate`, review the new SQL in `drizzle/`, then `pnpm db:migrate`. Use `db:push` only on a throwaway database.
+
+   Auth uses self-hosted [Better Auth](https://www.better-auth.com) with email and password. Its tables are defined in `src/db/auth-schema.ts` and created by the same migrations.
 
 ## Getting Started
 
 First, run the development server:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
 pnpm dev
-# or
-bun dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
