@@ -4,7 +4,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 
 This project uses [pnpm](https://pnpm.io). Run `pnpm install` first.
 
-1. Create `.env.local` with `DATABASE_URL` (Neon → Connect), `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `BETTER_AUTH_URL` (`http://localhost:3000` in development).
+1. Create `.env.local` with `DATABASE_URL` (Neon → Connect), `BETTER_AUTH_SECRET` (`openssl rand -base64 32`) and `BETTER_AUTH_URL` (`http://localhost:3000` in development). In production behind a proxy or CDN, also set `TRUSTED_IP_HEADER` to the client-IP header it overwrites (for example `cf-connecting-ip` on Cloudflare or `x-real-ip` on Vercel). Without it, sign-in rate limits are shared across all clients.
 2. Create the tables (catalogue: `categories`, `products`, `product_images`; auth: `user`, `session`, `account`, `verification`) and load the starting products:
    ```bash
    pnpm db:migrate   # applies the SQL in drizzle/
