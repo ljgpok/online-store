@@ -49,7 +49,9 @@ export async function GET(request: NextRequest) {
       return to(`/account/orders/${order.id}`);
     case "payment_failed":
       return to("/bag?checkout=failed");
-    default:
+    case "cancelled":
+      return to("/bag?checkout=replaced");
+    case "expired":
       return to("/bag?checkout=expired");
   }
 }

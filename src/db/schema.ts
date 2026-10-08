@@ -128,6 +128,12 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 /** Stripe has taken (or is taking) the payment, so the bag has become this order. */
 export const CONFIRMED_STATUSES = ["paid", "processing", "needs_review"] as const satisfies readonly OrderStatus[];
 
+/** Checkout started and not yet settled: these orders still hold their reserved stock. */
+export const OPEN_STATUSES = ["pending_payment", "processing"] as const satisfies readonly OrderStatus[];
+
+/** An order id (a UUID). Checked before querying, so a malformed id finds nothing. */
+export const ORDER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** `payment_status` exactly as Stripe reports it on the Checkout Session. */
 export const STRIPE_PAYMENT_STATUSES = ["unpaid", "paid", "no_payment_required"] as const;
 export type StripePaymentStatus = (typeof STRIPE_PAYMENT_STATUSES)[number];

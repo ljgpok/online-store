@@ -45,6 +45,12 @@ const notices: Record<string, Notice> = {
     body: "Pieces are held for 30 minutes during payment. Nothing was charged; check out again to reserve them.",
     tone: "alert",
   },
+  replaced: {
+    title: "Checkout was opened again",
+    body: "You started checkout in another window, so this one was closed. Nothing was charged.",
+    tone: "info",
+    offersResume: true,
+  },
   error: {
     title: "We couldn’t open checkout",
     body: "Nothing was charged and your bag is unchanged. Please try again in a moment.",

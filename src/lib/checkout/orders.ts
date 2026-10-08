@@ -7,6 +7,7 @@ import { and, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type Stripe from "stripe";
 import { db } from "@/db";
 import {
+  OPEN_STATUSES,
   orders,
   STRIPE_PAYMENT_STATUSES,
   type OrderShipping,
@@ -29,17 +30,23 @@ type ReleaseStatus = Extract<OrderStatus, "expired" | "payment_failed" | "cancel
  * Moves an order to a closed status and returns its reserved stock, in one
  * statement. Only the caller that wins the status change returns stock, and
  * `stock_released_at` guards against ever returning it twice.
+ *
+ * `onlyWithoutSession` matches only while no Checkout Session is attached.
+ * Checkout attaches its session only while the order is still pending, so the
+ * two can't both succeed: a payable session never outlives a released order.
  */
 export async function releaseOrder(
   orderId: string,
   to: ReleaseStatus,
   from: OrderStatus[],
   stripePaymentStatus?: StripePaymentStatus | null,
+  { onlyWithoutSession = false }: { onlyWithoutSession?: boolean } = {},
 ): Promise<boolean> {
   const fromList = sql.join(
     from.map((s) => sql`${s}`),
     sql`, `,
   );
+  const sessionCondition = onlyWithoutSession ? sql`AND stripe_checkout_session_id IS NULL` : sql``;
   const result = await db.execute(sql`
     WITH released AS (
       UPDATE orders
@@ -47,7 +54,7 @@ export async function releaseOrder(
           stock_released_at = now(),
           updated_at = now(),
           stripe_payment_status = COALESCE(${stripePaymentStatus ?? null}, stripe_payment_status)
-      WHERE id = ${orderId} AND status IN (${fromList}) AND stock_released_at IS NULL
+      WHERE id = ${orderId} AND status IN (${fromList}) AND stock_released_at IS NULL ${sessionCondition}
       RETURNING id
     ), returned AS (
       UPDATE products p
@@ -133,14 +140,30 @@ export async function applySession(session: Stripe.Checkout.Session): Promise<vo
         `amount ${session.amount_total} ${session.currency} vs ${order.totalCents} ${order.currency}`,
     );
   }
-  await db
+  const confirmed = await db
     .update(orders)
     .set({
       ...details,
       status: matches ? "paid" : "needs_review",
       paidAt: new Date(),
     })
-    .where(and(eq(orders.id, order.id), inArray(orders.status, ["pending_payment", "processing"])));
+    .where(and(eq(orders.id, order.id), inArray(orders.status, [...OPEN_STATUSES])))
+    .returning({ id: orders.id });
+  if (confirmed.length > 0) return;
+
+  // Paid, but the order had already closed and returned its stock. That should
+  // be impossible; if it happens, the money must not go unnoticed.
+  const flagged = await db
+    .update(orders)
+    .set({ ...details, status: "needs_review", paidAt: new Date() })
+    .where(and(eq(orders.id, order.id), inArray(orders.status, ["cancelled", "expired", "payment_failed"])))
+    .returning({ id: orders.id });
+  if (flagged.length > 0) {
+    console.error(
+      `[checkout] Order ${order.id} was paid after it closed and its stock was returned. ` +
+        `Marked needs_review: refund it or fulfil it by hand.`,
+    );
+  }
 }
 
 /** Handles the Checkout events we subscribe to. Others are ignored. */
@@ -175,11 +198,22 @@ export async function syncSession(sessionId: string): Promise<void> {
  * that's applied instead, so a paid order is never released by mistake.
  */
 async function closePendingOrder(order: { id: string; stripeCheckoutSessionId: string | null }) {
-  if (!order.stripeCheckoutSessionId) {
-    await releaseOrder(order.id, "cancelled", ["pending_payment"]);
-    return;
+  let sessionId = order.stripeCheckoutSessionId;
+  if (!sessionId) {
+    // Its checkout may be attaching a session right now, so only cancel it if
+    // it still has none. Otherwise close it through the session it now has.
+    const released = await releaseOrder(order.id, "cancelled", ["pending_payment"], null, {
+      onlyWithoutSession: true,
+    });
+    if (released) return;
+    const current = await db.query.orders.findFirst({
+      columns: { status: true, stripeCheckoutSessionId: true },
+      where: eq(orders.id, order.id),
+    });
+    if (current?.status !== "pending_payment" || !current.stripeCheckoutSessionId) return;
+    sessionId = current.stripeCheckoutSessionId;
   }
-  const session = await stripe().checkout.sessions.retrieve(order.stripeCheckoutSessionId);
+  const session = await stripe().checkout.sessions.retrieve(sessionId);
   if (session.status === "open") {
     await stripe().checkout.sessions.expire(session.id);
     await releaseOrder(order.id, "cancelled", ["pending_payment"]);
@@ -217,7 +251,7 @@ export async function settleOverdueOrders(limit = 5) {
   for (const order of overdue) {
     try {
       if (order.stripeCheckoutSessionId) await syncSession(order.stripeCheckoutSessionId);
-      else await releaseOrder(order.id, "cancelled", ["pending_payment"]);
+      else await releaseOrder(order.id, "cancelled", ["pending_payment"], null, { onlyWithoutSession: true });
     } catch (error) {
       console.error(`[checkout] Couldn't settle overdue order ${order.id}`, error);
     }

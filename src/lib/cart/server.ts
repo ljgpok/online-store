@@ -10,6 +10,7 @@ import {
 } from "@/db/queries";
 import type { CartView } from "./types";
 import { maxOrderable, stockState } from "@/lib/stock";
+import { getSession } from "@/lib/auth/session";
 import { readCartLines, type StoredLine } from "./cookie";
 
 /** Whether `size` is valid for the product: one of its sizes, or "" for one-size pieces. */
@@ -70,6 +71,7 @@ export function buildCart(stored: StoredLine[], products: CartProduct[]): CartVi
 export const getCart = cache(async (): Promise<CartView> => {
   const stored = await readCartLines();
   if (stored.length === 0) return buildCart([], []);
-  const products = await getCartProducts([...new Set(stored.map((l) => l.productId))]);
+  const session = await getSession();
+  const products = await getCartProducts([...new Set(stored.map((l) => l.productId))], session?.user.id);
   return buildCart(stored, products);
 });

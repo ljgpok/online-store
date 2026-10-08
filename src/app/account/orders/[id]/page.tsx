@@ -27,7 +27,9 @@ const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "long" });
 const statusCopy: Record<OrderStatus, { title: string; body: string; tone: string }> = {
   paid: {
     title: "Thank you. Your order is confirmed.",
-    body: "Your payment has been received. Stripe has sent a receipt to your email.",
+    // No receipt promise: Stripe only emails one when that's enabled in the
+    // Dashboard, and never in test mode.
+    body: "Your payment has been received. This page is your order confirmation, and you can find it any time under Orders in your account.",
     tone: "text-confirm",
   },
   processing: {
@@ -40,9 +42,11 @@ const statusCopy: Record<OrderStatus, { title: string; body: string; tone: strin
     body: "Your payment was received, but something didn’t match. Our client services team will review it and contact you.",
     tone: "text-black",
   },
+  // Can't tell "paid, confirmation on its way" from "never finished paying",
+  // so this covers both without assuming either.
   pending_payment: {
-    title: "Confirming your payment",
-    body: "We’re waiting for Stripe to confirm your payment. This usually takes a few seconds, and this page updates by itself. Please don’t pay again.",
+    title: "Waiting for payment",
+    body: "If you’ve just paid, Stripe usually confirms within a few seconds and this page updates by itself, so please don’t pay again. If you didn’t finish paying, nothing has been charged and your pieces are still in your bag.",
     tone: "text-black",
   },
   payment_failed: {

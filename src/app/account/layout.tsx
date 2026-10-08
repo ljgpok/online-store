@@ -1,11 +1,11 @@
 import Link from "next/link";
 import { AccountNav } from "@/components/account/account-nav";
-import { requireUser } from "@/lib/auth/session";
+import { requestedPath, requireUser } from "@/lib/auth/session";
 
 // Layouts don't re-run on client navigation, so each account page calls
 // `requireUser` as well. `getSession` is cached, so the repeat is free.
 export default async function AccountLayout({ children }: LayoutProps<"/account">) {
-  const { user } = await requireUser("/account");
+  const { user } = await requireUser(await requestedPath("/account"));
   const firstName = user.name.trim().split(/\s+/)[0] || user.name;
 
   return (

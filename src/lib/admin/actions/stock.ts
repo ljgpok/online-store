@@ -3,12 +3,12 @@
 // Stock changes from the admin Stock page. Each is one conditional UPDATE,
 // never a read-then-write, so it composes safely with checkout reservations
 // and releases happening at the same moment.
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, eq, gte, lte, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { products } from "@/db/schema";
 import { requireAdmin } from "@/lib/auth/session";
-import { parseStockUpdate, type StockFormErrors } from "@/lib/admin/validate";
+import { MAX_STOCK, parseStockUpdate, type StockFormErrors } from "@/lib/admin/validate";
 
 export type StockActionState =
   | { ok: true; available: number; message: string }
@@ -27,11 +27,13 @@ export async function updateStock(
   let updated: { available: number }[];
   try {
     if (update.mode === "adjust") {
-      // Relative, so reservations landing at the same time still count.
+      // Relative, so reservations landing at the same time still count. The
+      // result stays within 0 and MAX_STOCK, the same range "Set to" allows.
+      const result = sql`${products.stockQuantity} + ${update.delta}`;
       updated = await db
         .update(products)
-        .set({ stockQuantity: sql`${products.stockQuantity} + ${update.delta}` })
-        .where(and(eq(products.id, update.productId), gte(sql`${products.stockQuantity} + ${update.delta}`, 0)))
+        .set({ stockQuantity: result })
+        .where(and(eq(products.id, update.productId), gte(result, 0), lte(result, MAX_STOCK)))
         .returning({ available: products.stockQuantity });
     } else {
       if (update.quantity === update.expected) {
@@ -63,11 +65,11 @@ export async function updateStock(
     .where(eq(products.id, update.productId));
   if (!row) return { ok: false, errors: { form: "This product no longer exists." } };
   if (update.mode === "adjust") {
-    return {
-      ok: false,
-      current: row.available,
-      errors: { amount: `Only ${row.available} available, so you can remove at most ${row.available}.` },
-    };
+    const amount =
+      update.delta > 0
+        ? `Stock can be at most ${MAX_STOCK.toLocaleString("en-US")}, and it’s ${row.available} now.`
+        : `Only ${row.available} available, so you can remove at most ${row.available}.`;
+    return { ok: false, current: row.available, errors: { amount } };
   }
   return {
     ok: false,

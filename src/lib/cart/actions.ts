@@ -4,6 +4,7 @@
 // the database and enforces size and stock rules; the client's numbers are
 // never trusted. Writing the cookie re-renders the page and header.
 import { getCartProductBySlug, getCartProducts, type CartProduct } from "@/db/queries";
+import { getSession } from "@/lib/auth/session";
 import { MAX_LINE_QUANTITY, maxOrderable } from "@/lib/stock";
 import { lineKey, readCartLines, writeCartLines, type StoredLine } from "./cookie";
 import { isValidSize } from "./server";
@@ -44,7 +45,7 @@ export async function addToBag(
     return { ok: false, error: "This piece is no longer available." };
   }
 
-  const product = await getCartProductBySlug(slug);
+  const product = await getCartProductBySlug(slug, (await getSession())?.user.id);
   if (!product) return { ok: false, error: "This piece is no longer available." };
   if (product.sizes.length > 0 && !size) {
     return { ok: false, error: "Select a size to add this to your bag." };
@@ -90,7 +91,7 @@ export async function updateQuantity(
   const line = lines.find((l) => lineKey(l.productId, l.size) === key);
   if (!line) return { ok: false, error: "That item is no longer in your bag." };
 
-  const [product] = await getCartProducts([productId]);
+  const [product] = await getCartProducts([productId], (await getSession())?.user.id);
   if (!product || !isValidSize(product, size) || quantity < 1) {
     await writeCartLines(lines.filter((l) => l !== line));
     return { ok: true };

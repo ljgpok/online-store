@@ -33,7 +33,8 @@ export async function startCheckout() {
 
   // 1. Re-validate the bag against current products and stock.
   const stored = await readCartLines();
-  const products = await getCartProducts([...new Set(stored.map((l) => l.productId))]);
+  // Counting this customer's own held units: step 2 releases them before reserving.
+  const products = await getCartProducts([...new Set(stored.map((l) => l.productId))], user.id);
   const cart = buildCart(stored, products);
   if (cart.lines.length === 0) redirect("/bag");
   if (cart.hasIssues) redirect("/bag?checkout=unavailable");
@@ -54,7 +55,7 @@ export async function startCheckout() {
   const { orderId, items } = result.reservation;
 
   // 4. Open a Stripe Checkout Session priced from the order rows just written.
-  let sessionUrl: string;
+  let sessionUrl: string | undefined;
   try {
     const base = siteUrl();
     const session = await stripe().checkout.sessions.create(
@@ -87,20 +88,32 @@ export async function startCheckout() {
       { idempotencyKey: `checkout-session-${orderId}` },
     );
     if (!session.url) throw new Error(`Checkout Session ${session.id} has no URL`);
-    await db
+    // Attach only while the order is still pending. A newer checkout from this
+    // customer may have replaced it (and returned its stock) while Stripe was
+    // creating the session; then the session must never be paid.
+    const attached = await db
       .update(orders)
       .set({
         stripeCheckoutSessionId: session.id,
         stripePaymentStatus: toPaymentStatus(session.payment_status),
         expiresAt: new Date(session.expires_at * 1000),
       })
-      .where(eq(orders.id, orderId));
-    sessionUrl = session.url;
+      .where(and(eq(orders.id, orderId), eq(orders.status, "pending_payment")))
+      .returning({ id: orders.id });
+    if (attached.length > 0) {
+      sessionUrl = session.url;
+    } else {
+      await stripe()
+        .checkout.sessions.expire(session.id)
+        .catch((error) => console.error(`[checkout] Couldn't expire orphaned session ${session.id}`, error));
+    }
   } catch (error) {
     console.error(`[checkout] Couldn't start Stripe Checkout for order ${orderId}`, error);
     await releaseOrder(orderId, "cancelled", ["pending_payment"]);
     redirect("/bag?checkout=error");
   }
+  // Its URL was never shown, so expiring it above means it can't be paid.
+  if (!sessionUrl) redirect("/bag?checkout=replaced");
 
   // Remember which order this bag became, so confirming it can clear the bag.
   await writeCartLines(stored, orderId);

@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 export default async function SignUpPage({ searchParams }: PageProps<"/sign-up">) {
   const next = safeNext((await searchParams).next);
-  // src/proxy.ts usually does this first; this covers a stale cookie check.
+  // Checked here, not in src/proxy.ts: a stale cookie must still reach the form.
   if (await getSession()) redirect(next);
 
   const altHref = next === "/account" ? "/sign-in" : `/sign-in?next=${encodeURIComponent(next)}`;

@@ -1,5 +1,5 @@
 import "server-only";
-import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { cache } from "react";
 import type { CartLine, CartView } from "@/lib/cart/types";
 import { LISTED_ORDER_STATUSES } from "@/lib/order-status";
@@ -7,6 +7,8 @@ import type { CategorySummary, Product } from "@/lib/products";
 import { db } from "./index";
 import {
   categories,
+  ORDER_ID_PATTERN,
+  orderItems,
   orders,
   productImages,
   products,
@@ -153,8 +155,41 @@ const toCartProduct = ({ images, ...row }: CartProductRow): CartProduct => ({
   image: images[0],
 });
 
-/** Fresh, uncached: the bag must see the latest price and stock. */
-export async function getCartProducts(ids: number[]): Promise<CartProduct[]> {
+/**
+ * Units this customer's own unfinished checkout is holding, by product.
+ * Starting a new checkout releases them first (`closeOpenOrdersFor`), so to
+ * this customer they're still available: without this, cancelling on Stripe's
+ * page would make their own bag read "Sold out".
+ */
+async function ownHolds(userId: string, ids: number[]): Promise<Map<number, number>> {
+  const rows = await db
+    .select({ productId: orderItems.productId, held: sql<number>`sum(${orderItems.reservedQuantity})::int` })
+    .from(orderItems)
+    .innerJoin(orders, eq(orders.id, orderItems.orderId))
+    .where(
+      and(
+        eq(orders.userId, userId),
+        eq(orders.status, "pending_payment"),
+        isNull(orders.stockReleasedAt),
+        inArray(orderItems.productId, ids),
+      ),
+    )
+    .groupBy(orderItems.productId);
+  return new Map(rows.map((r) => [r.productId!, Number(r.held)]));
+}
+
+/** Stock as `forUserId` can buy it: what's free plus what their own open checkout holds. */
+async function withOwnHolds(rows: CartProduct[], forUserId?: string): Promise<CartProduct[]> {
+  if (!forUserId || rows.length === 0) return rows;
+  const holds = await ownHolds(forUserId, rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, stockQuantity: r.stockQuantity + (holds.get(r.id) ?? 0) }));
+}
+
+/**
+ * Fresh, uncached: the bag must see the latest price and stock. Pass the
+ * signed-in customer's id so their own held units count as available to them.
+ */
+export async function getCartProducts(ids: number[], forUserId?: string): Promise<CartProduct[]> {
   if (ids.length === 0) return [];
   const rows = await db.query.products.findMany({
     columns: cartColumns,
@@ -163,10 +198,10 @@ export async function getCartProducts(ids: number[]): Promise<CartProduct[]> {
     },
     where: inArray(products.id, ids),
   });
-  return rows.map(toCartProduct);
+  return withOwnHolds(rows.map(toCartProduct), forUserId);
 }
 
-export async function getCartProductBySlug(slug: string): Promise<CartProduct | undefined> {
+export async function getCartProductBySlug(slug: string, forUserId?: string): Promise<CartProduct | undefined> {
   const row = await db.query.products.findFirst({
     columns: cartColumns,
     with: {
@@ -174,7 +209,9 @@ export async function getCartProductBySlug(slug: string): Promise<CartProduct | 
     },
     where: eq(products.slug, slug),
   });
-  return row ? toCartProduct(row) : undefined;
+  if (!row) return undefined;
+  const [product] = await withOwnHolds([toCartProduct(row)], forUserId);
+  return product;
 }
 
 /** A priced bag line in cents, before `mapCart`. */
@@ -230,15 +267,13 @@ export type OrderView = {
   }[];
 };
 
-const ORDER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
 /**
  * The customer's own order, or undefined. The query is scoped to `userId`, so
  * another customer's order id finds nothing, exactly like one that doesn't exist.
  * Cached per request so the page and its metadata share one query.
  */
 export const getOrderForUser = cache(async (id: string, userId: string): Promise<OrderView | undefined> => {
-  if (!ORDER_ID.test(id)) return undefined;
+  if (!ORDER_ID_PATTERN.test(id)) return undefined;
   const row = await db.query.orders.findFirst({
     where: and(eq(orders.id, id), eq(orders.userId, userId)),
     with: { items: { orderBy: (i, { asc }) => [asc(i.id)] } },

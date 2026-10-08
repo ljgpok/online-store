@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { AdminNav } from "@/components/admin/admin-nav";
-import { requireAdmin } from "@/lib/auth/session";
+import { requestedPath, requireAdmin } from "@/lib/auth/session";
 
 // The admin shell. This check runs on first load, but layouts don't re-run on
 // client navigation, so every admin page and server action checks the role
 // itself too. `pnpm check:admin` enforces that.
 export default async function AdminLayout({ children }: LayoutProps<"/admin">) {
-  const { user } = await requireAdmin("/admin");
+  const { user } = await requireAdmin(await requestedPath("/admin"));
 
   return (
     <div className="container-page flex flex-col gap-(--space-block) pt-8 pb-(--space-section) lg:pt-12">

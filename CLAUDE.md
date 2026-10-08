@@ -2,35 +2,90 @@
 
 ## Package manager
 
-- Use **pnpm** (`pnpm install`, `pnpm dev`, `pnpm db:migrate`, `pnpm dlx`). There's no `package-lock.json`, so don't use npm or yarn to install.
+- Use **pnpm** (`pnpm install`, `pnpm dev`, `pnpm dlx`). There's no `package-lock.json`, so don't install with npm or yarn.
 
-## Database conventions
+## Database
 
-- **Scope:** Postgres (Neon) through Drizzle holds the catalogue (`categories`, `products`, `product_images`) and Better Auth's tables (`user`, `session`, `account`, `verification`), all in `public`, matching the reference project's database. There's no separate stock table, and no cart table (see **Bag**). Checkout tables (`orders`, `order_items`, `stripe_events`) exist for the planned Stripe checkout: orders belong to a `user`, keep our own `status` separate from `stripe_payment_status` (exactly what Stripe reports), and copy prices into `order_items` when checkout starts. Their allowed values are `ORDER_STATUSES` and `STRIPE_PAYMENT_STATUSES` in `schema.ts`, enforced by CHECK constraints. Reviews, wishlists and product variants are deliberately out of scope until asked for.
-- **Stock:** one quantity per product in `products.stock_quantity`, shared by all sizes. `products.sizes` is a plain `text[]` of size labels in display order (empty for one-size items), with no per-size stock. When `made_to_order` is true, an out-of-stock product stays orderable, and `stock_detail` holds the lead-time note.
-- **Stock states:** `in-stock`, `low-stock` (at or below `LOW_STOCK_THRESHOLD` = 3), `sold-out` and `made-to-order` are derived in `src/lib/stock.ts`, which also holds their wording (`stockCopy`) and colour (`stockTone`). Don't hard-code stock messages in components.
-- **Money:** prices are stored as integer cents (`price_cents`, `sale_price_cents`). The storefront `Product` type uses whole dollars, and the conversion happens only in `src/db/queries.ts`: `mapProduct` for products and `mapCart` for the bag, whose line totals and subtotal are added up in cents first. Format prices with `formatPrice` from `src/lib/format.ts`.
-- **Server/client boundary:** database reads go through `src/db/queries.ts`, which is `server-only` and wrapped in React `cache`. Client components import only from `src/lib/products.ts`, `stock.ts`, `format.ts`, `cart/types.ts` and the server actions in `cart/actions.ts`, never from `@/db`. Never expose `DATABASE_URL` through a `NEXT_PUBLIC_` variable.
-- **Freshness:** pages that show price or stock use `export const dynamic = "force-dynamic"` and no `generateStaticParams`, so stock is never frozen at build time.
-- **Bag:** the cart is an httpOnly `cart` cookie holding only product ids, sizes and quantities (`src/lib/cart/cookie.ts`). It never holds prices or stock, and nothing in it is trusted. `getCart()` in `src/lib/cart/server.ts` re-reads the products on every request, prices each line at the current sale or regular price, and flags lines that are now sold out (left out of the subtotal) or over the available stock. All changes go through the server actions in `src/lib/cart/actions.ts`, which re-check the product, the size and the stock limit each time. Stock is shared by all sizes, so the limit is checked against the product's total across sizes: `maxOrderable` in `src/lib/stock.ts` (made-to-order pieces are capped at `MAX_LINE_QUANTITY` instead). The cart reserves no stock. A future checkout must re-check everything and decrement stock atomically with `db.batch`. The bag lives in one browser and isn't tied to accounts. Move it to a table when cross-device carts or checkout need it.
-- **Checkout:** Stripe-hosted Checkout, signed-in customers only. `startCheckout` (`src/lib/checkout/actions.ts`) takes no form input. It re-validates the bag, then `reserveOrder` writes the order, its items (prices copied from `products`) and the stock decrement in one `db.batch`, which the `products_stock_non_negative` CHECK makes all-or-nothing. The Checkout Session is built only from those order rows (`price_data`, never a client price) and expires after 31 minutes. Never pass `payment_method_types`.
-  - Orders change status only through `src/lib/checkout/orders.ts`: conditional updates from the allowed states, and `releaseOrder` returns stock in the same statement as the status change, at most once. "Paid" comes only from a verified webhook (`src/app/api/stripe/webhook/route.ts`) or a server-side `sessions.retrieve`. `/checkout/return` uses its `session_id` only to find the customer's own order, asks Stripe once, then always sends the customer to `/account/orders/[id]`. That page shows only our recorded state: while `pending_payment` it re-renders every 3 s for a minute (reading our database, never Stripe). `startCheckout` marks the bag cookie with the order id (`o`), and any bag edit drops the mark. A confirmed order clears the bag only when the mark matches, so viewing an old order never empties a newer bag. A paid session whose order id, amount or currency doesn't match becomes `needs_review`, never `paid`.
-  - Order history (`/account/orders`, via `getOrdersForUser`) only lists the signed-in customer's orders with a status in `LISTED_ORDER_STATUSES` (`src/lib/order-status.ts`). Expired and replaced checkouts charged nothing, so they're hidden.
-  - Webhook events are recorded in `stripe_events` and skipped if already processed. Handled events: `checkout.session.completed`, `.async_payment_succeeded`, `.async_payment_failed`, `.expired`. Locally, `stripe listen --forward-to localhost:3000/api/stripe/webhook`.
-  - Env: `STRIPE_SECRET_KEY` (a restricted `rk_` key with Checkout Sessions write and PaymentIntents read) and `STRIPE_WEBHOOK_SECRET`, never `NEXT_PUBLIC_`. Success and cancel URLs are built from `BETTER_AUTH_URL`, never from request headers. Not built yet: tax (needs a Stripe Tax registration), paid shipping, refunds, order history.
-- **Admin:** `/admin/*` (Products, Categories, Stock, Orders) is for `role = "admin"` only. Hiding links isn't protection. The layout, every page (and any `generateMetadata` or route handler) must `await requireAdmin(...)` before any other await; reading `params`/`searchParams` first is fine. Every exported action in `src/lib/admin/actions/*.ts` (`"use server"`) must call it as its first statement, before reading input. Export only `export async function` there. Admin reads go in `src/db/admin-queries.ts`, imported only from `src/app/admin` and `src/lib/admin`. `pnpm check:admin` (also run by `pnpm lint`) enforces all of this. Non-admins get a 404.
-  - Stock (`/admin/stock`): `stock_quantity` is "available to sell". Units in open checkouts (`pending_payment`/`processing`) are already subtracted and shown as "held". Admins change it only through `updateStock` (`src/lib/admin/actions/stock.ts`): "Adjust by" is a relative `UPDATE … SET stock_quantity = stock_quantity + n WHERE stock_quantity + n >= 0`, and "Set to" is a compare-and-set on the value the admin saw. Never write `stock_quantity` with a read-then-write. It would overwrite reservations and releases that land in between. Values are validated server-side in `src/lib/admin/validate.ts` (whole numbers, 0–100,000).
-- **Editorial content:** campaign photos stay in code in `src/lib/editorial.ts`. Homepage category tiles come from the `categories` table (`image_url`, `image_alt`, `position`) via `getCategoriesWithCounts`.
-- **Schema changes:** edit `src/db/schema.ts`, run `pnpm db:generate`, review the SQL in `drizzle/`, then run `pnpm db:migrate` and commit `drizzle/`.
-  - `db:migrate` runs `src/db/migrate.ts` (the neon-http migrator), because `drizzle-kit migrate` exits with code 1 and no error message against this database.
-  - Don't use `db:push` on a shared database. It would try to drop tables that aren't in the schema.
-  - `db:generate` can't answer drizzle-kit's rename prompts without a terminal. When a change both drops and adds columns on one table, split it into two migrations: add first, then drop.
-  - If a migration adds a `NOT NULL` column or moves data, hand-edit the generated SQL (add nullable, backfill, then set not null). Mark each edit with a `-- Hand-edited:` comment.
-- **Seed:** `pnpm db:seed` is for development databases only. **Never run it against a database admins manage**: it upserts products by slug, replaces their images and deletes unused categories that aren't in the seed, which reverts admin edits. On a development database it's safe to re-run. It upserts products (including stock) by slug, replaces each product's images, and removes categories that are no longer seeded. Sample data lives in `src/db/seed-data.ts`, listed newest first, and `created_at` is set a day apart from a fixed date so New arrivals order is stable. Check every new photo by eye for visible brands before adding it.
-- **Drizzle Studio:** deliberately not a project script. `drizzle-kit studio` serves an unauthenticated SQL endpoint with wildcard CORS (hard-coded) on `0.0.0.0`, so any webpage open in the browser could run queries with the database owner's rights. Browse data in the Neon console instead. If Studio is truly needed, run it by hand and briefly with `pnpm exec drizzle-kit studio --host 127.0.0.1`, with no other sites open, and stop it straight after. Don't re-add a `db:studio` script.
-- **Writes:** the neon-http driver has no interactive transactions, so use `db.batch([...])` for multi-statement writes that must be atomic.
-- **Auth:** self-hosted Better Auth with the Drizzle adapter, in `src/lib/auth/server.ts`. Its tables are in `src/db/auth-schema.ts`, generated by `pnpm dlx @better-auth/cli generate --config src/lib/auth/server.ts --output src/db/auth-schema.ts` and re-exported from `schema.ts`. Regenerate that file (then `db:generate` and `db:migrate`) rather than hand-editing it. `server.ts` uses relative imports and no `server-only` so the CLI can load it. The client is `src/lib/auth/client.ts`, and the route is `src/app/api/auth/[...path]/route.ts`. It needs `BETTER_AUTH_SECRET` and `BETTER_AUTH_URL`. Rate limiting keys on client IP, and only the header named in the optional `TRUSTED_IP_HEADER` is trusted for it. That must be a header the deployment's proxy or CDN overwrites (`cf-connecting-ip`, `x-real-ip`). Never default back to `x-forwarded-for`, which clients can forge to dodge sign-in limits. We don't use Neon Auth, so ignore the `neon_auth` schema if it's still present.
-- **Sessions and roles:** email and password only. Sessions are database rows that last 30 days and roll forward daily, with no cookie cache, so sign-out and role changes apply on the next request. `user.role` is `"customer"` (the default) or `"admin"`. It's an `additionalFields` entry with `input: false`, so sign-up can't set it. The only way to change it is `pnpm auth:make-admin <email>`.
-- **Reading the session:** server code reads it only through `src/lib/auth/session.ts` (`getSession`, `requireUser`, `requireAdmin`, `safeNext`). `src/proxy.ts` only checks that the cookie exists, to redirect early, and never authorizes anything. Every page under `/account` calls `requireUser`, and every page under `/admin` calls `requireAdmin`. A layout check isn't enough on its own. Any admin server action or route handler must call `requireAdmin` first, because actions are public endpoints. Pass any `?next=` value through `safeNext` before redirecting to it.
-- **Password endpoints:** sign-in and sign-up forms call `authClient`, so the request goes through `/api/auth` and its rate limiter. Don't move them to server actions that call `auth.api.signInEmail` or `auth.api.signUpEmail`, because `auth.api` calls skip the rate limiter. Sign-out is a server action.
-- **Environment:** `DATABASE_URL` and the Better Auth variables live in `.env.local`, which git ignores. Scripts outside Next load it through `src/db/load-env.ts`. Claude's permission rules deny reading `.env*` files, so don't try to read them another way. Ask the user instead.
+- **Scope:** Neon Postgres through Drizzle, everything in `public`:
+  - the catalogue: `categories`, `products`, `product_images`;
+  - Better Auth: `user`, `session`, `account`, `verification`, `rate_limit`;
+  - checkout: `orders`, `order_items`, `stripe_events`.
+
+  There's no stock table and no cart table. Reviews, wishlists and product variants are out of scope until asked for.
+- **Status values:** order `status` and `stripe_payment_status` are enforced by CHECK constraints. `status` is our own state; `stripe_payment_status` is exactly what Stripe reports. Use the named groups in `schema.ts` (`OPEN_STATUSES`, `CONFIRMED_STATUSES`, `ORDER_ID_PATTERN`), not repeated literals.
+- **Money:** stored as integer cents. The storefront types use whole dollars, and the conversion happens only in `src/db/queries.ts` (`mapProduct`, `mapCart`). Add totals up in cents first. Format with `formatPrice`.
+- **Server/client boundary:** database reads go through `src/db/queries.ts` (`server-only`). Admin reads go through `src/db/admin-queries.ts`. Client components never import `@/db`. Never expose `DATABASE_URL` through a `NEXT_PUBLIC_` variable.
+- **Freshness:** pages that show price, stock or orders use `dynamic = "force-dynamic"` and no `generateStaticParams`.
+- **Atomic writes:** neon-http has no interactive transactions. Use `db.batch([...])` or a single statement (for example a CTE) for writes that must be all or nothing.
+- **Schema changes:** edit `schema.ts`, run `pnpm db:generate`, review the SQL, run `pnpm db:migrate`, and commit `drizzle/`.
+  - `db:migrate` runs `src/db/migrate.ts`, because `drizzle-kit migrate` exits with code 1 and no message against this database.
+  - Never `db:push` a shared database: it would drop tables that aren't in the schema.
+  - `db:generate` can't answer rename prompts without a terminal. If one table both drops and adds columns, split it into two migrations: add first, then drop.
+  - For a new `NOT NULL` column, or when moving data, hand-edit the SQL (add as nullable, backfill, then set not null). Mark each edit with `-- Hand-edited:`.
+- **Seed:** `pnpm db:seed` is for a fresh or development database only. It overwrites seeded products' stock, prices and images, and deletes unseeded categories that nothing uses. Never run it on a database admins manage, or one a deployment uses. Check every new sample photo by eye for visible brands.
+- **Drizzle Studio is deliberately not a script.** It serves an unauthenticated SQL endpoint with wildcard CORS, so any open webpage could query the database. Use the Neon console. If Studio is truly needed, run `pnpm exec drizzle-kit studio --host 127.0.0.1` briefly, with no other sites open.
+
+## Stock, bag and checkout
+
+- **Stock is one number per product:** `products.stock_quantity` means "available to sell" and is shared by all sizes. `sizes` is only a list of labels. Made-to-order products stay orderable at 0 and take only what's on the shelf.
+- **Stock states and wording live only in `src/lib/stock.ts`** (`stockState`, `stockCopy`, `stockTone`). Don't hard-code stock messages.
+- **Never write `stock_quantity` with a read-then-write.** Every change is one conditional statement guarded by the `products_stock_non_negative` CHECK:
+  - checkout reservation: `- n`;
+  - release: `+ reserved_quantity`, at most once, guarded by `stock_released_at`;
+  - admin "Adjust by": `+ n`, kept within 0 and `MAX_STOCK`;
+  - admin "Set to": compare-and-set against the value the admin saw.
+- **Made-to-order reservations** work out their shelf take in SQL inside the reservation batch, with the product rows locked, never from an earlier read.
+- **The bag** is an httpOnly cookie holding only product ids, sizes and quantities. It's untrusted and re-priced and re-checked on every read. All changes go through `src/lib/cart/actions.ts`. It's tied to one browser, not to accounts: move it to a table if cross-device carts are needed.
+- **A customer's own held stock is available to them.** Their unfinished checkout holds stock, but a new checkout releases it first. Pass the signed-in user's id (`forUserId`) whenever the bag, cart actions or checkout read stock. Otherwise cancelling on Stripe's page makes their own bag say "Sold out".
+- **Checkout is Stripe-hosted, for signed-in customers only:**
+  - The session is built only from the order rows (`price_data`), never from client values. Never pass `payment_method_types`.
+  - A new checkout replaces the customer's unfinished one.
+  - Attaching a session and cancelling an order are mutually exclusive claims:
+    - attach only while the order is `pending_payment`;
+    - cancel an order without a session only while it still has none;
+    - whichever loses expires its Stripe session.
+
+    Don't weaken either condition.
+- **Order status changes only in `src/lib/checkout/orders.ts`,** through conditional updates. "Paid" comes only from a verified webhook or a server-side `sessions.retrieve`, never from the browser or the return URL.
+  - A payment whose order reference, amount or currency doesn't match becomes `needs_review`.
+  - So does one that arrives after the order closed, which is also logged.
+- **Stripe:**
+  - The API version is pinned in `src/lib/stripe.ts` (`2026-08-26.dahlia`). The production webhook endpoint must use the same version and subscribe to the four `checkout.session.*` events the code handles.
+  - Use a restricted key (`rk_`) with only Checkout Sessions: Write and Payment Intents: Read. Never put it in a `NEXT_PUBLIC_` variable.
+  - Return URLs come from `BETTER_AUTH_URL`, never from request headers.
+  - Don't promise customers a receipt email: Stripe sends one only if that's enabled in the Dashboard.
+- **Not built yet:** tax, paid shipping, refunds, deleting products, order actions, admin categories, and a scheduled job that settles missed webhooks. Today overdue orders are only settled when someone starts a checkout.
+
+## Auth and admin
+
+- **Better Auth, self-hosted,** with email and password only.
+  - Regenerate `src/db/auth-schema.ts` with the Better Auth CLI (`--config src/lib/auth/server.ts`), then `db:generate` and `db:migrate`. Don't hand-edit it.
+  - `server.ts` uses relative imports and no `server-only` so the CLI can load it.
+  - We don't use Neon Auth, so ignore any leftover `neon_auth` schema.
+- **Sign-in rate limit:**
+  - Only the header named in `TRUSTED_IP_HEADER` is trusted for the client IP. It must be one the proxy or CDN *overwrites* (`x-real-ip` on Vercel, `cf-connecting-ip` on Cloudflare). Never `x-forwarded-for`: clients can forge it.
+  - It's required on production servers, including Vercel Preview: without it auth endpoints return 500, by design.
+  - Counts are kept in the `rate_limit` table. Don't switch back to memory storage, which doesn't work across serverless instances.
+  - Sign-in and sign-up must go through `authClient` (`/api/auth`): `auth.api.*` calls skip the rate limiter.
+- **Roles:** `user.role` is `"customer"` or `"admin"`, with `input: false`. Only `pnpm auth:make-admin <email>` changes it. Sessions are database rows with no cookie cache, so role changes and sign-out apply on the next request.
+- **Reading the session:**
+  - Server code reads it only through `src/lib/auth/session.ts`.
+  - Pass any `?next=` value through `safeNext`.
+  - `src/proxy.ts` only redirects signed-out visitors away from `/account` and `/admin`, and never authorizes anything. It must never redirect away from `/sign-in` or `/sign-up` based on the cookie: a stale cookie would loop forever.
+- **Admin protection:** server actions are public endpoints, callable from any URL.
+  - Every admin page, layout, `generateMetadata` and route handler awaits `requireAdmin` before any other await. Reading `params` and `searchParams` first is fine.
+  - Every action in `src/lib/admin/actions/` calls it as its first statement.
+  - Non-admins get a 404.
+  - `pnpm lint` runs `scripts/check-admin-guards.mjs` to enforce this. Keep admin actions in that folder, so the check sees them.
+- **Admin products:** product images must be on a host allowed in `next.config.ts` (`PRODUCT_IMAGE_HOSTS`). The product form never changes an existing product's stock: stock changes only on the Stock page.
+
+## Environment and testing
+
+- **Environment variables:**
+  - Secrets live in `.env.local`, which git ignores: `DATABASE_URL`, `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and in production `TRUSTED_IP_HEADER`.
+  - Scripts outside Next load them through `src/db/load-env.ts`.
+  - Claude's permission rules deny reading any `.env*` file, including `.env.example`. Don't read them another way; ask the user.
+- **Shared database:** the development database is currently also used by the Vercel deployment, with real customer orders. Test against it only with temporary rows (slug, SKU or email starting `zz-repro-`), and delete them afterwards, checking that nothing is left behind.
+- **No test suite or CI yet.** Verify with `pnpm exec tsc --noEmit`, `pnpm lint`, and real runs: curl, headless Chrome, and Stripe test mode.
+  - Run `stripe listen --forward-to localhost:3000/api/stripe/webhook` while testing payments.
+  - The Stripe CLI is installed in `~/.local/bin`, because Homebrew refuses to install on this Mac.

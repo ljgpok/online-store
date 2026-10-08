@@ -5,6 +5,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { cache } from "react";
+import { RETURN_TO_HEADER } from "./return-to";
 import { auth } from "./server";
 
 export type Role = "customer" | "admin";
@@ -25,6 +26,14 @@ export type CurrentSession = {
 };
 
 const DEFAULT_RETURN = "/account";
+
+/**
+ * The path this request asked for, for layouts (which can't see the URL) to
+ * pass to `requireUser`/`requireAdmin`. Set by `src/proxy.ts`; `fallback` otherwise.
+ */
+export async function requestedPath(fallback: string): Promise<string> {
+  return (await headers()).get(RETURN_TO_HEADER) ?? fallback;
+}
 
 // One database lookup per request, however many components ask.
 export const getSession = cache(async (): Promise<CurrentSession | null> => {

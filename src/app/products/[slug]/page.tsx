@@ -31,9 +31,11 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
   const { name, sku, colour, category, price, salePrice, images, description, details } = product;
   // The header reads the bag too; `getCart` is cached, so this costs no extra query.
   const [related, cart] = await Promise.all([getRelatedProducts(product), getCart()]);
-  const inBag = cart.lines
-    .filter((line) => line.slug === product.slug)
-    .reduce((sum, line) => sum + line.quantity, 0);
+  const lines = cart.lines.filter((line) => line.slug === product.slug);
+  const inBag = lines.reduce((sum, line) => sum + line.quantity, 0);
+  // The bag counts units the customer's own unfinished checkout holds as theirs;
+  // use the same figure so this page doesn't call their own pieces sold out.
+  const stock = lines[0]?.stockUnits ?? product.stock;
   const multiple = images.length > 1;
 
   return (
@@ -96,7 +98,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
               slug={product.slug}
               sizes={product.sizes}
               sizeGuide={product.sizeGuide}
-              stock={product.stock}
+              stock={stock}
               madeToOrder={product.madeToOrder}
               stockDetail={product.stockDetail}
               inBag={inBag}

@@ -39,7 +39,9 @@ This is sometimes called *vibe coding*. Here it was closer to **agentic engineer
   - shows each product's *available* stock next to the units *held* in open checkouts;
   - has filters for low stock, sold out and made to order, plus search;
   - lets admins change stock by **adjusting by** an amount, or **setting to** a value. "Set to" only saves if the stock is still what the admin saw. Neither can overwrite a checkout that happens at the same moment.
-- **Admin access:** only users with the admin role can open the admin area, and a lint check makes sure every admin page and action has that guard. Products, categories and orders have placeholder pages so far.
+- **Admin access:** only users with the admin role can open the admin area, and a lint check makes sure every admin page and action has that guard. Categories have a placeholder page so far.
+- **Admin products** (`/admin/products`): list and search, then create or edit a product: name, URL, SKU, category, price and sale price, sizes, made to order, description, details and gallery images. Every field is validated on the server, and the form keeps your edits when something needs fixing. Starting stock is set when creating; after that, stock changes on the Stock page.
+- **Admin orders** (`/admin/orders`): every customer's orders, filtered by status and searchable by order number or email. Each order shows the customer, shipping address, items (including how many came from stock and how many are made to order), totals, Stripe references and whether its stock is held or returned. Read-only.
 
 ## Tech stack
 
@@ -66,12 +68,13 @@ You need Node 20 or later, pnpm, a Neon database and a Stripe account in test mo
    - `BETTER_AUTH_URL`: `http://localhost:3000`.
    - `STRIPE_SECRET_KEY`: a restricted test key (`rk_test_…`) with **Checkout Sessions: Write** and **Payment Intents: Read**.
    - `STRIPE_WEBHOOK_SECRET`: printed by `stripe listen` (see step 5).
-   - `TRUSTED_IP_HEADER`: leave empty locally. In production behind a proxy or CDN, set it to the client-IP header that the proxy *overwrites* (`cf-connecting-ip` on Cloudflare, `x-real-ip` on Vercel). Never use `x-forwarded-for`, because clients can fake it.
+   - `TRUSTED_IP_HEADER`: leave empty in development. **Required in production, including Vercel previews:** without it, sign-in and sign-up return errors. Set it to the client-IP header your proxy or CDN *overwrites* (`x-real-ip` on Vercel, `cf-connecting-ip` on Cloudflare). Never use `x-forwarded-for`, because clients can fake it. Sign-in rate limits are stored per IP in the `rate_limit` table.
 3. **Database:** create the tables and load the sample catalogue (13 products):
    ```bash
    pnpm db:migrate   # applies the SQL in drizzle/
-   pnpm db:seed      # safe to re-run
+   pnpm db:seed      # development databases only: it resets stock and prices
    ```
+   Run the seed only on a fresh or development database. It overwrites each seeded product's stock, price and images, so on a database the admin manages (or one a deployment uses) it would undo stock changes.
 4. **Run** `pnpm dev`, then open [http://localhost:3000](http://localhost:3000).
 5. **Stripe webhooks** (only while testing payments): install the [Stripe CLI](https://docs.stripe.com/stripe-cli), run `stripe login`, then keep this running:
    ```bash
@@ -98,7 +101,7 @@ After changing `src/db/schema.ts`, run `pnpm db:generate`, review the new SQL in
 
 ## Not built yet
 
-- **Admin editing:** for products, categories and orders.
+- **Admin editing:** for categories. Deleting products, and order actions such as refunds or marking orders as shipped.
 - **Stock:** a history of stock changes, and stock tracked per size.
 - **Testing:** automated tests and CI.
 - **Shop features:** tax, paid shipping, refunds, reviews, wishlists and product variants.
