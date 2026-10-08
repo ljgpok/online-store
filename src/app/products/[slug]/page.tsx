@@ -88,7 +88,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
             </div>
 
             <PurchasePanel
-              name={name}
+              slug={product.slug}
               sizes={product.sizes}
               sizeGuide={product.sizeGuide}
               stock={product.stock}

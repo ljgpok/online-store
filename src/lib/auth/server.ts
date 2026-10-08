@@ -18,12 +18,38 @@ export const auth = betterAuth({
   database: drizzleAdapter(db, { provider: "pg" }),
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
-  emailAndPassword: { enabled: true },
+  emailAndPassword: {
+    enabled: true,
+    minPasswordLength: 8,
+    maxPasswordLength: 128,
+    autoSignIn: true,
+  },
+  // Sessions are rows in `session` and last 30 days, extended at most once a
+  // day while the customer keeps visiting. No cookie cache, so sign-out and
+  // role changes apply on the next request.
+  session: {
+    expiresIn: 60 * 60 * 24 * 30,
+    updateAge: 60 * 60 * 24,
+  },
+  user: {
+    additionalFields: {
+      // "customer" or "admin". `input: false` keeps sign-up and update-user
+      // from accepting it, so only `pnpm auth:make-admin` can change it.
+      role: {
+        type: "string",
+        required: true,
+        defaultValue: "customer",
+        input: false,
+      },
+    },
+  },
   advanced: {
     ipAddress: {
       ipAddressHeaders: trustedIpHeader ? [trustedIpHeader] : [],
     },
   },
-  // Lets server actions set the session cookie.
+  // Lets server actions set the session cookie. Keep it last.
   plugins: [nextCookies()],
 });
+
+export type Session = typeof auth.$Infer.Session;

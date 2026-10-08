@@ -5,7 +5,7 @@ const groups = [
     title: "Client services",
     links: [
       { label: "Contact us", href: "/contact" },
-      { label: "Track an order", href: "/orders" },
+      { label: "Track an order", href: "/account/orders" },
       { label: "Delivery", href: "/delivery" },
       { label: "Returns and exchanges", href: "/returns" },
     ],

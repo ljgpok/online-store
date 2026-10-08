@@ -18,6 +18,18 @@ export function isOrderable(state: StockState) {
   return state !== "sold-out";
 }
 
+/** The most of one product a bag can hold, across all its sizes. */
+export const MAX_LINE_QUANTITY = 10;
+
+/**
+ * How many of a product can be in the bag at once, all sizes together.
+ * Made-to-order pieces aren't limited by stock; everything else is.
+ */
+export function maxOrderable(units: number, madeToOrder = false) {
+  if (madeToOrder) return MAX_LINE_QUANTITY;
+  return Math.max(0, Math.min(units, MAX_LINE_QUANTITY));
+}
+
 export function stockCopy(state: StockState, units: number) {
   switch (state) {
     case "in-stock":

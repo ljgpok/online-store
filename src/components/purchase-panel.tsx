@@ -1,11 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useRef, useState, type FormEvent } from "react";
+import { startTransition, useActionState, useRef, useState, type FormEvent } from "react";
+import { addToBag } from "@/lib/cart/actions";
 import { isOrderable, stockCopy, stockState, stockTone } from "@/lib/stock";
 
 type Props = {
-  name: string;
+  slug: string;
   /** Sizes to choose from; empty for one-size products. */
   sizes: string[];
   sizeGuide?: string;
@@ -16,29 +17,42 @@ type Props = {
   stockDetail?: string;
 };
 
-export function PurchasePanel({ name, sizes, sizeGuide, stock, madeToOrder, stockDetail }: Props) {
+export function PurchasePanel({
+  slug,
+  sizes,
+  sizeGuide,
+  stock,
+  madeToOrder,
+  stockDetail,
+}: Props) {
   const [size, setSize] = useState<string | null>(null);
   const [error, setError] = useState(false);
-  const [added, setAdded] = useState<string | null>(null);
+  // The server checks size and stock again; its answer is shown below the button.
+  const [result, formAction, pending] = useActionState(addToBag, null);
   const firstSize = useRef<HTMLInputElement>(null);
 
   const state = stockState(stock, madeToOrder);
   const soldOut = !isOrderable(state);
   const sized = sizes.length > 0;
 
-  function onSubmit(e: FormEvent) {
+  function onSubmit(e: FormEvent<HTMLFormElement>) {
+    // With JavaScript, submit here rather than through `action`: React resets a
+    // form after an action submission, which would clear the chosen size.
+    // `action` stays as the fallback before JavaScript loads.
     e.preventDefault();
+    // Catch a missing size before the round trip; the action is still the judge.
     if (sized && !size) {
       setError(true);
       firstSize.current?.focus();
       return;
     }
-    // No bag service yet: confirm the choice so the flow can be reviewed end to end.
-    setAdded(size ? `${name}, size ${size}` : name);
+    const formData = new FormData(e.currentTarget);
+    startTransition(() => formAction(formData));
   }
 
   return (
-    <form onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+    <form action={formAction} onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
+      <input type="hidden" name="slug" value={slug} />
       {sized && (
         <fieldset aria-describedby={error ? "size-error" : undefined} disabled={soldOut}>
           <legend className="label">
@@ -59,7 +73,6 @@ export function PurchasePanel({ name, sizes, sizeGuide, stock, madeToOrder, stoc
                   onChange={() => {
                     setSize(label);
                     setError(false);
-                    setAdded(null);
                   }}
                   className="visually-hidden"
                 />
@@ -85,8 +98,12 @@ export function PurchasePanel({ name, sizes, sizeGuide, stock, madeToOrder, stoc
       )}
 
       <div className="flex flex-col gap-3">
-        <button type="submit" className="btn btn-primary btn-lg btn-block" disabled={soldOut}>
-          {soldOut ? "Sold out" : "Add to bag"}
+        <button
+          type="submit"
+          className={`btn btn-primary btn-lg btn-block ${pending ? "disabled:cursor-progress disabled:opacity-100" : ""}`}
+          disabled={soldOut || pending}
+        >
+          {soldOut ? "Sold out" : pending ? "Adding…" : "Add to bag"}
         </button>
         {soldOut && (
           <p className="text-meta">
@@ -95,14 +112,17 @@ export function PurchasePanel({ name, sizes, sizeGuide, stock, madeToOrder, stoc
           </p>
         )}
         <p role="status" className="text-sm">
-          {added && (
+          {result?.ok && !pending && (
             <>
-              Added to your bag: {added}.{" "}
+              Added to your bag: {result.message}.{" "}
               <Link href="/bag" className="link">
                 View bag
               </Link>
             </>
           )}
+        </p>
+        <p role="alert" className="text-sm text-alert empty:hidden">
+          {result && !result.ok && !pending ? result.error : null}
         </p>
       </div>
     </form>

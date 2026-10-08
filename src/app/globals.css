@@ -576,7 +576,8 @@
     transition: transform var(--duration-settle) var(--ease-settle);
   }
   .link-nav:hover::after,
-  .link-nav[aria-current="page"]::after {
+  .link-nav[aria-current="page"]::after,
+  .link-nav[aria-current="true"]::after {
     transform: scaleX(1);
   }
 

@@ -1,8 +1,13 @@
 import Link from "next/link";
+import { getCart } from "@/lib/cart/server";
 import { MobileMenu } from "./mobile-menu";
 import { primaryNav } from "./site-nav";
 
-export function SiteHeader() {
+export async function SiteHeader() {
+  // The validated bag (shared with the bag page in the same request), so lines
+  // for deleted products or sizes are never counted. No query when it's empty.
+  const { itemCount: bagCount } = await getCart();
+
   return (
     <header className="header-bar container-page">
       <div>
@@ -31,7 +36,8 @@ export function SiteHeader() {
           Account
         </Link>
         <Link href="/bag" className="link-nav">
-          Bag (0)
+          Bag ({bagCount})
+          <span className="visually-hidden"> {bagCount === 1 ? "item" : "items"}</span>
         </Link>
       </div>
     </header>

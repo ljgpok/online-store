@@ -36,6 +36,20 @@
       "when": 1790623176874,
       "tag": "0004_glamorous_lester",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791399229629,
+      "tag": "0005_nebulous_pretty_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791438268887,
+      "tag": "0006_sudden_human_robot",
+      "breakpoints": true
     }
   ]
 }
