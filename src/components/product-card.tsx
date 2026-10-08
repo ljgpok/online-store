@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import type { Product } from "@/lib/products";
-import { stockState } from "@/lib/stock";
+import { stockCopy, stockState, stockTone } from "@/lib/stock";
 import { Price } from "./price";
 
 export function ProductCard({ product }: { product: Product }) {
@@ -34,6 +34,10 @@ export function ProductCard({ product }: { product: Product }) {
         <span>{name}</span>
         <span className="text-meta">{colour}</span>
         <Price price={price} salePrice={salePrice} />
+        {/* Sold out and made to order have badges; low stock is worth saying here. */}
+        {state === "low-stock" && (
+          <span className={`text-sm ${stockTone(state)}`}>{stockCopy(state, stock)}</span>
+        )}
       </div>
     </Link>
   );

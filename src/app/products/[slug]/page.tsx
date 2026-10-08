@@ -6,6 +6,7 @@ import { Price } from "@/components/price";
 import { ProductCard } from "@/components/product-card";
 import { PurchasePanel } from "@/components/purchase-panel";
 import { getProductBySlug, getRelatedProducts } from "@/db/queries";
+import { getCart } from "@/lib/cart/server";
 
 // Rendered per request so price and stock always come from the database.
 // Unknown slugs fall through to notFound().
@@ -28,7 +29,11 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
   if (!product) notFound();
 
   const { name, sku, colour, category, price, salePrice, images, description, details } = product;
-  const related = await getRelatedProducts(product);
+  // The header reads the bag too; `getCart` is cached, so this costs no extra query.
+  const [related, cart] = await Promise.all([getRelatedProducts(product), getCart()]);
+  const inBag = cart.lines
+    .filter((line) => line.slug === product.slug)
+    .reduce((sum, line) => sum + line.quantity, 0);
   const multiple = images.length > 1;
 
   return (
@@ -94,6 +99,7 @@ export default async function ProductPage({ params }: PageProps<"/products/[slug
               stock={product.stock}
               madeToOrder={product.madeToOrder}
               stockDetail={product.stockDetail}
+              inBag={inBag}
             />
 
             <div className="rule-b">

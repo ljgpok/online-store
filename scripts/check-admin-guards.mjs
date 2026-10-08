@@ -125,7 +125,11 @@ if (exists(actionsDir)) {
 for (const file of walk(join(root, "src"))) {
   const rel = relative(root, file);
   if (rel === "src/db/admin-queries.ts") continue;
-  if (!/@\/db\/admin-queries|\.\/admin-queries/.test(readFileSync(file, "utf8"))) continue;
+  // `import type` is erased at build time and can't reach the database.
+  const valueImport = readFileSync(file, "utf8")
+    .split("\n")
+    .some((line) => /from\s+["'](@\/db\/admin-queries|\.\/admin-queries)["']/.test(line) && !/^\s*import\s+type\b/.test(line));
+  if (!valueImport) continue;
   if (!rel.startsWith("src/app/admin/") && !rel.startsWith("src/lib/admin/")) {
     problems.push(`${rel}: imports @/db/admin-queries outside src/app/admin and src/lib/admin`);
   }

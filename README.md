@@ -20,6 +20,7 @@ This is sometimes called *vibe coding*. Here it was closer to **agentic engineer
 - **Guardrails:**
   - Project rules live in [`CLAUDE.md`](CLAUDE.md), so every session follows the same database, security and design conventions.
   - Permission rules in `.claude/settings.json` stop the agent from reading `.env` secrets and make it ask before `git push`.
+- **Subagents:** focused helper agents investigate before anything is built. For example, three agents looked into the stock model, the admin patterns and the test setup in parallel before inventory management was planned. Bugs are reproduced first, with temporary database rows that are removed afterwards, and only then fixed. A read-only `feature-reviewer` agent (`.claude/agents`) reviews finished features with fresh eyes.
 - **Skills:** reusable instructions for the agent, kept in `.claude/skills` and `.agents/skills`. There's one for building UI with this design system, plus the official Better Auth skills.
 
 ## Features
@@ -32,8 +33,13 @@ This is sometimes called *vibe coding*. Here it was closer to **agentic engineer
   - stock is reserved when checkout starts;
   - payment happens on Stripe's hosted page;
   - the order is confirmed by a signature-checked webhook, and repeated events are handled only once;
-  - stock goes back when a checkout is cancelled, expires or fails.
-- **Admin area:** manage products, categories, stock and orders. Only users with the admin role can open it, and a lint check makes sure every admin page has that guard.
+  - stock goes back when a checkout is cancelled, expires or fails;
+  - made-to-order pieces take whatever is on the shelf at that moment and are never refused, even when two shoppers check out at the same time.
+- **Admin stock management** (`/admin/stock`):
+  - shows each product's *available* stock next to the units *held* in open checkouts;
+  - has filters for low stock, sold out and made to order, plus search;
+  - lets admins change stock by **adjusting by** an amount, or **setting to** a value. "Set to" only saves if the stock is still what the admin saw. Neither can overwrite a checkout that happens at the same moment.
+- **Admin access:** only users with the admin role can open the admin area, and a lint check makes sure every admin page and action has that guard. Products, categories and orders have placeholder pages so far.
 
 ## Tech stack
 
@@ -92,4 +98,7 @@ After changing `src/db/schema.ts`, run `pnpm db:generate`, review the new SQL in
 
 ## Not built yet
 
-Tax, paid shipping, refunds, reviews, wishlists and product variants.
+- **Admin editing:** for products, categories and orders.
+- **Stock:** a history of stock changes, and stock tracked per size.
+- **Testing:** automated tests and CI.
+- **Shop features:** tax, paid shipping, refunds, reviews, wishlists and product variants.

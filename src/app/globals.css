@@ -641,7 +641,8 @@
     border-color: var(--color-black);
   }
   .chip[aria-pressed="true"],
-  .chip[aria-checked="true"] {
+  .chip[aria-checked="true"],
+  .chip[aria-current="page"] {
     background: var(--color-black);
     border-color: var(--color-black);
     color: var(--color-white);

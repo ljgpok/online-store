@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { startTransition, useActionState, useRef, useState, type FormEvent } from "react";
 import { addToBag } from "@/lib/cart/actions";
-import { isOrderable, stockCopy, stockState, stockTone } from "@/lib/stock";
+import { isOrderable, MAX_LINE_QUANTITY, maxOrderable, stockCopy, stockState, stockTone } from "@/lib/stock";
 
 type Props = {
   slug: string;
@@ -15,6 +15,8 @@ type Props = {
   /** When out of stock, the product can still be ordered and is made for the customer. */
   madeToOrder: boolean;
   stockDetail?: string;
+  /** Units of this piece already in the bag, all sizes together. */
+  inBag?: number;
 };
 
 export function PurchasePanel({
@@ -24,6 +26,7 @@ export function PurchasePanel({
   stock,
   madeToOrder,
   stockDetail,
+  inBag = 0,
 }: Props) {
   const [size, setSize] = useState<string | null>(null);
   const [error, setError] = useState(false);
@@ -33,6 +36,10 @@ export function PurchasePanel({
 
   const state = stockState(stock, madeToOrder);
   const soldOut = !isOrderable(state);
+  // The bag can't hold more than is available (or the per-piece cap), so say
+  // so before the shopper tries, instead of after.
+  const limit = maxOrderable(stock, madeToOrder);
+  const allInBag = !soldOut && inBag >= limit;
   const sized = sizes.length > 0;
 
   function onSubmit(e: FormEvent<HTMLFormElement>) {
@@ -54,7 +61,7 @@ export function PurchasePanel({
     <form action={formAction} onSubmit={onSubmit} className="flex flex-col gap-6" noValidate>
       <input type="hidden" name="slug" value={slug} />
       {sized && (
-        <fieldset aria-describedby={error ? "size-error" : undefined} disabled={soldOut}>
+        <fieldset aria-describedby={error ? "size-error" : undefined} disabled={soldOut || allInBag}>
           <legend className="label">
             Size{size && <span className="font-normal text-graphite">: {size}</span>}
           </legend>
@@ -92,7 +99,10 @@ export function PurchasePanel({
       {/* When nothing is left, the disabled button already says so. */}
       {!soldOut && (
         <div className="flex flex-col gap-1">
-          <p className={`text-sm ${stockTone(state)}`}>{stockCopy(state, stock)}</p>
+          <p className="text-sm">
+            <span className={stockTone(state)}>{stockCopy(state, stock)}</span>
+            {inBag > 0 && <span className="text-graphite"> · {inBag} in your bag</span>}
+          </p>
           {state === "made-to-order" && stockDetail && <p className="text-meta">{stockDetail}</p>}
         </div>
       )}
@@ -101,10 +111,20 @@ export function PurchasePanel({
         <button
           type="submit"
           className={`btn btn-primary btn-lg btn-block ${pending ? "disabled:cursor-progress disabled:opacity-100" : ""}`}
-          disabled={soldOut || pending}
+          disabled={soldOut || allInBag || pending}
         >
-          {soldOut ? "Sold out" : pending ? "Adding…" : "Add to bag"}
+          {soldOut ? "Sold out" : allInBag ? "All in your bag" : pending ? "Adding…" : "Add to bag"}
         </button>
+        {allInBag && (
+          <p className="text-meta">
+            {limit === MAX_LINE_QUANTITY && (madeToOrder || stock >= MAX_LINE_QUANTITY)
+              ? `You have the maximum of ${MAX_LINE_QUANTITY} in your bag.`
+              : `You have all ${limit} available in your bag.`}{" "}
+            <Link href="/bag" className="link">
+              View bag
+            </Link>
+          </p>
+        )}
         {soldOut && (
           <p className="text-meta">
             This piece is sold out online. A client advisor can check store
